@@ -56,8 +56,11 @@ func main() {
 	// Set up router
 	router := api.SetupRouter(handler)
 
-	// Wrap router with logging middleware
-	loggedRouter := middleware.LoggingMiddleware(router)
+	// Wrap router with CORS middleware first to handle preflight requests
+	corsRouter := middleware.CORSMiddleware(router)
+
+	// Wrap with logging middleware
+	loggedRouter := middleware.LoggingMiddleware(corsRouter)
 
 	// Start server
 	serverAddress := fmt.Sprintf(":%s", port)
