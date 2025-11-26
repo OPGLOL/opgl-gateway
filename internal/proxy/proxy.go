@@ -26,11 +26,22 @@ func NewServiceProxy(dataServiceURL string, cortexServiceURL string) *ServicePro
 	}
 }
 
-// GetSummoner retrieves summoner data from opgl-data service
-func (proxy *ServiceProxy) GetSummoner(region string, summonerName string) (*models.Summoner, error) {
-	url := fmt.Sprintf("%s/api/v1/summoner/%s/%s", proxy.dataServiceURL, region, summonerName)
+// GetSummonerByRiotID retrieves summoner data from opgl-data service using Riot ID
+func (proxy *ServiceProxy) GetSummonerByRiotID(region string, gameName string, tagLine string) (*models.Summoner, error) {
+	url := fmt.Sprintf("%s/api/v1/summoner", proxy.dataServiceURL)
 
-	response, err := proxy.httpClient.Get(url)
+	requestBody := map[string]string{
+		"region":   region,
+		"gameName": gameName,
+		"tagLine":  tagLine,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	response, err := proxy.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to call data service: %w", err)
 	}
@@ -49,11 +60,57 @@ func (proxy *ServiceProxy) GetSummoner(region string, summonerName string) (*mod
 	return &summoner, nil
 }
 
-// GetMatches retrieves match history from opgl-data service
-func (proxy *ServiceProxy) GetMatches(region string, puuid string, count int) ([]models.Match, error) {
-	url := fmt.Sprintf("%s/api/v1/matches/%s/%s?count=%d", proxy.dataServiceURL, region, puuid, count)
+// GetMatchesByRiotID retrieves match history from opgl-data service using Riot ID
+func (proxy *ServiceProxy) GetMatchesByRiotID(region string, gameName string, tagLine string, count int) ([]models.Match, error) {
+	url := fmt.Sprintf("%s/api/v1/matches", proxy.dataServiceURL)
 
-	response, err := proxy.httpClient.Get(url)
+	requestBody := map[string]interface{}{
+		"region":   region,
+		"gameName": gameName,
+		"tagLine":  tagLine,
+		"count":    count,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	response, err := proxy.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to call data service: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		return nil, fmt.Errorf("data service returned error %d: %s", response.StatusCode, string(body))
+	}
+
+	var matches []models.Match
+	if err := json.NewDecoder(response.Body).Decode(&matches); err != nil {
+		return nil, fmt.Errorf("failed to decode matches response: %w", err)
+	}
+
+	return matches, nil
+}
+
+// GetMatchesByPUUID retrieves match history from opgl-data service using PUUID (internal use)
+func (proxy *ServiceProxy) GetMatchesByPUUID(region string, puuid string, count int) ([]models.Match, error) {
+	url := fmt.Sprintf("%s/api/v1/matches", proxy.dataServiceURL)
+
+	requestBody := map[string]interface{}{
+		"region": region,
+		"puuid":  puuid,
+		"count":  count,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	response, err := proxy.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to call data service: %w", err)
 	}
