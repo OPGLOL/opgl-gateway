@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	apierrors "github.com/OPGLOL/opgl-gateway-service/internal/errors"
 	"github.com/OPGLOL/opgl-gateway-service/internal/models"
 	"github.com/OPGLOL/opgl-gateway-service/internal/proxy"
 )
@@ -39,18 +40,24 @@ func (handler *Handler) GetSummoner(writer http.ResponseWriter, request *http.Re
 	}
 
 	if err := json.NewDecoder(request.Body).Decode(&summonerRequest); err != nil {
-		http.Error(writer, "Invalid request body", http.StatusBadRequest)
+		apierrors.WriteError(writer, apierrors.InvalidRequestBody("Invalid JSON format"))
 		return
 	}
 
 	if summonerRequest.Region == "" || summonerRequest.GameName == "" || summonerRequest.TagLine == "" {
-		http.Error(writer, "region, gameName, and tagLine are required", http.StatusBadRequest)
+		apierrors.WriteError(writer, apierrors.MissingFields("region, gameName, and tagLine are required"))
 		return
 	}
 
 	summoner, err := handler.serviceProxy.GetSummonerByRiotID(summonerRequest.Region, summonerRequest.GameName, summonerRequest.TagLine)
 	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		// Check if the error is already an APIError
+		if apiErr, ok := err.(*apierrors.APIError); ok {
+			apierrors.WriteError(writer, apiErr)
+			return
+		}
+		// Wrap unknown errors as internal errors
+		apierrors.WriteError(writer, apierrors.InternalError("An unexpected error occurred"))
 		return
 	}
 
@@ -70,7 +77,7 @@ func (handler *Handler) GetMatches(writer http.ResponseWriter, request *http.Req
 	}
 
 	if err := json.NewDecoder(request.Body).Decode(&matchRequest); err != nil {
-		http.Error(writer, "Invalid request body", http.StatusBadRequest)
+		apierrors.WriteError(writer, apierrors.InvalidRequestBody("Invalid JSON format"))
 		return
 	}
 
@@ -86,21 +93,27 @@ func (handler *Handler) GetMatches(writer http.ResponseWriter, request *http.Req
 	// Check if PUUID is provided for direct lookup
 	if matchRequest.PUUID != "" {
 		if matchRequest.Region == "" {
-			http.Error(writer, "region is required when using puuid", http.StatusBadRequest)
+			apierrors.WriteError(writer, apierrors.MissingFields("region is required when using puuid"))
 			return
 		}
 		matches, err = handler.serviceProxy.GetMatchesByPUUID(matchRequest.Region, matchRequest.PUUID, count)
 	} else {
 		// Use Riot ID lookup
 		if matchRequest.Region == "" || matchRequest.GameName == "" || matchRequest.TagLine == "" {
-			http.Error(writer, "region, gameName, and tagLine are required (or use region and puuid)", http.StatusBadRequest)
+			apierrors.WriteError(writer, apierrors.MissingFields("region, gameName, and tagLine are required (or use region and puuid)"))
 			return
 		}
 		matches, err = handler.serviceProxy.GetMatchesByRiotID(matchRequest.Region, matchRequest.GameName, matchRequest.TagLine, count)
 	}
 
 	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		// Check if the error is already an APIError
+		if apiErr, ok := err.(*apierrors.APIError); ok {
+			apierrors.WriteError(writer, apiErr)
+			return
+		}
+		// Wrap unknown errors as internal errors
+		apierrors.WriteError(writer, apierrors.InternalError("An unexpected error occurred"))
 		return
 	}
 
@@ -117,33 +130,45 @@ func (handler *Handler) AnalyzePlayer(writer http.ResponseWriter, request *http.
 	}
 
 	if err := json.NewDecoder(request.Body).Decode(&analyzeRequest); err != nil {
-		http.Error(writer, "Invalid request body", http.StatusBadRequest)
+		apierrors.WriteError(writer, apierrors.InvalidRequestBody("Invalid JSON format"))
 		return
 	}
 
 	if analyzeRequest.Region == "" || analyzeRequest.GameName == "" || analyzeRequest.TagLine == "" {
-		http.Error(writer, "region, gameName, and tagLine are required", http.StatusBadRequest)
+		apierrors.WriteError(writer, apierrors.MissingFields("region, gameName, and tagLine are required"))
 		return
 	}
 
 	// Step 1: Get summoner data from opgl-data
 	summoner, err := handler.serviceProxy.GetSummonerByRiotID(analyzeRequest.Region, analyzeRequest.GameName, analyzeRequest.TagLine)
 	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		if apiErr, ok := err.(*apierrors.APIError); ok {
+			apierrors.WriteError(writer, apiErr)
+			return
+		}
+		apierrors.WriteError(writer, apierrors.InternalError("An unexpected error occurred"))
 		return
 	}
 
 	// Step 2: Get match history from opgl-data (using internal method with PUUID)
 	matches, err := handler.serviceProxy.GetMatchesByPUUID(analyzeRequest.Region, summoner.PUUID, 20)
 	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		if apiErr, ok := err.(*apierrors.APIError); ok {
+			apierrors.WriteError(writer, apiErr)
+			return
+		}
+		apierrors.WriteError(writer, apierrors.InternalError("An unexpected error occurred"))
 		return
 	}
 
 	// Step 3: Send data to opgl-cortex-engine for analysis
 	analysisResult, err := handler.serviceProxy.AnalyzePlayer(summoner, matches)
 	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		if apiErr, ok := err.(*apierrors.APIError); ok {
+			apierrors.WriteError(writer, apiErr)
+			return
+		}
+		apierrors.WriteError(writer, apierrors.InternalError("An unexpected error occurred"))
 		return
 	}
 
