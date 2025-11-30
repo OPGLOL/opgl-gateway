@@ -12,6 +12,7 @@ const (
 	// Client errors (4xx)
 	ErrCodeInvalidRequestBody ErrorCode = "INVALID_REQUEST_BODY"
 	ErrCodeMissingFields      ErrorCode = "MISSING_REQUIRED_FIELDS"
+	ErrCodeValidationFailed   ErrorCode = "VALIDATION_FAILED"
 	ErrCodePlayerNotFound     ErrorCode = "PLAYER_NOT_FOUND"
 	ErrCodeMatchesNotFound    ErrorCode = "MATCHES_NOT_FOUND"
 	ErrCodeInvalidRegion      ErrorCode = "INVALID_REGION"
@@ -81,6 +82,10 @@ func CortexServiceError(message string) *APIError {
 
 func InternalError(message string) *APIError {
 	return NewAPIError(ErrCodeInternalError, message, http.StatusInternalServerError)
+}
+
+func ValidationFailed(message string) *APIError {
+	return NewAPIError(ErrCodeValidationFailed, message, http.StatusBadRequest)
 }
 
 // WriteError writes a JSON error response to the http.ResponseWriter

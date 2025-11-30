@@ -7,6 +7,7 @@ import (
 	apierrors "github.com/OPGLOL/opgl-gateway-service/internal/errors"
 	"github.com/OPGLOL/opgl-gateway-service/internal/models"
 	"github.com/OPGLOL/opgl-gateway-service/internal/proxy"
+	"github.com/OPGLOL/opgl-gateway-service/internal/validation"
 )
 
 // Handler manages HTTP request handlers for the gateway
@@ -33,23 +34,24 @@ func (handler *Handler) HealthCheck(writer http.ResponseWriter, request *http.Re
 
 // GetSummoner proxies summoner requests to opgl-data service using Riot ID
 func (handler *Handler) GetSummoner(writer http.ResponseWriter, request *http.Request) {
-	var summonerRequest struct {
-		Region   string `json:"region"`
-		GameName string `json:"gameName"`
-		TagLine  string `json:"tagLine"`
-	}
+	var summonerRequest validation.SummonerRequest
 
 	if err := json.NewDecoder(request.Body).Decode(&summonerRequest); err != nil {
 		apierrors.WriteError(writer, apierrors.InvalidRequestBody("Invalid JSON format"))
 		return
 	}
 
-	if summonerRequest.Region == "" || summonerRequest.GameName == "" || summonerRequest.TagLine == "" {
-		apierrors.WriteError(writer, apierrors.MissingFields("region, gameName, and tagLine are required"))
+	// Validate request
+	validationResult := validation.ValidateSummonerRequest(&summonerRequest)
+	if !validationResult.IsValid() {
+		apierrors.WriteError(writer, apierrors.ValidationFailed(validationResult.GetErrorMessages()))
 		return
 	}
 
-	summoner, err := handler.serviceProxy.GetSummonerByRiotID(summonerRequest.Region, summonerRequest.GameName, summonerRequest.TagLine)
+	// Normalize region to lowercase for consistent API calls
+	normalizedRegion := validation.NormalizeRegion(summonerRequest.Region)
+
+	summoner, err := handler.serviceProxy.GetSummonerByRiotID(normalizedRegion, summonerRequest.GameName, summonerRequest.TagLine)
 	if err != nil {
 		// Check if the error is already an APIError
 		if apiErr, ok := err.(*apierrors.APIError); ok {
@@ -68,20 +70,22 @@ func (handler *Handler) GetSummoner(writer http.ResponseWriter, request *http.Re
 // GetMatches proxies match history requests to opgl-data service
 // Accepts either Riot ID (region, gameName, tagLine) or PUUID (region, puuid)
 func (handler *Handler) GetMatches(writer http.ResponseWriter, request *http.Request) {
-	var matchRequest struct {
-		Region   string `json:"region"`
-		GameName string `json:"gameName"`
-		TagLine  string `json:"tagLine"`
-		PUUID    string `json:"puuid"`
-		Count    int    `json:"count"`
-	}
+	var matchRequest validation.MatchRequest
 
 	if err := json.NewDecoder(request.Body).Decode(&matchRequest); err != nil {
 		apierrors.WriteError(writer, apierrors.InvalidRequestBody("Invalid JSON format"))
 		return
 	}
 
-	// Set default count if not provided
+	// Validate request
+	validationResult := validation.ValidateMatchRequest(&matchRequest)
+	if !validationResult.IsValid() {
+		apierrors.WriteError(writer, apierrors.ValidationFailed(validationResult.GetErrorMessages()))
+		return
+	}
+
+	// Normalize region and set default count
+	normalizedRegion := validation.NormalizeRegion(matchRequest.Region)
 	count := matchRequest.Count
 	if count <= 0 {
 		count = 20
@@ -92,18 +96,10 @@ func (handler *Handler) GetMatches(writer http.ResponseWriter, request *http.Req
 
 	// Check if PUUID is provided for direct lookup
 	if matchRequest.PUUID != "" {
-		if matchRequest.Region == "" {
-			apierrors.WriteError(writer, apierrors.MissingFields("region is required when using puuid"))
-			return
-		}
-		matches, err = handler.serviceProxy.GetMatchesByPUUID(matchRequest.Region, matchRequest.PUUID, count)
+		matches, err = handler.serviceProxy.GetMatchesByPUUID(normalizedRegion, matchRequest.PUUID, count)
 	} else {
 		// Use Riot ID lookup
-		if matchRequest.Region == "" || matchRequest.GameName == "" || matchRequest.TagLine == "" {
-			apierrors.WriteError(writer, apierrors.MissingFields("region, gameName, and tagLine are required (or use region and puuid)"))
-			return
-		}
-		matches, err = handler.serviceProxy.GetMatchesByRiotID(matchRequest.Region, matchRequest.GameName, matchRequest.TagLine, count)
+		matches, err = handler.serviceProxy.GetMatchesByRiotID(normalizedRegion, matchRequest.GameName, matchRequest.TagLine, count)
 	}
 
 	if err != nil {
@@ -123,24 +119,25 @@ func (handler *Handler) GetMatches(writer http.ResponseWriter, request *http.Req
 
 // AnalyzePlayer orchestrates player analysis by calling both data and cortex services using Riot ID
 func (handler *Handler) AnalyzePlayer(writer http.ResponseWriter, request *http.Request) {
-	var analyzeRequest struct {
-		Region   string `json:"region"`
-		GameName string `json:"gameName"`
-		TagLine  string `json:"tagLine"`
-	}
+	var analyzeRequest validation.AnalyzeRequest
 
 	if err := json.NewDecoder(request.Body).Decode(&analyzeRequest); err != nil {
 		apierrors.WriteError(writer, apierrors.InvalidRequestBody("Invalid JSON format"))
 		return
 	}
 
-	if analyzeRequest.Region == "" || analyzeRequest.GameName == "" || analyzeRequest.TagLine == "" {
-		apierrors.WriteError(writer, apierrors.MissingFields("region, gameName, and tagLine are required"))
+	// Validate request
+	validationResult := validation.ValidateAnalyzeRequest(&analyzeRequest)
+	if !validationResult.IsValid() {
+		apierrors.WriteError(writer, apierrors.ValidationFailed(validationResult.GetErrorMessages()))
 		return
 	}
 
+	// Normalize region to lowercase
+	normalizedRegion := validation.NormalizeRegion(analyzeRequest.Region)
+
 	// Step 1: Get summoner data from opgl-data
-	summoner, err := handler.serviceProxy.GetSummonerByRiotID(analyzeRequest.Region, analyzeRequest.GameName, analyzeRequest.TagLine)
+	summoner, err := handler.serviceProxy.GetSummonerByRiotID(normalizedRegion, analyzeRequest.GameName, analyzeRequest.TagLine)
 	if err != nil {
 		if apiErr, ok := err.(*apierrors.APIError); ok {
 			apierrors.WriteError(writer, apiErr)
@@ -151,7 +148,7 @@ func (handler *Handler) AnalyzePlayer(writer http.ResponseWriter, request *http.
 	}
 
 	// Step 2: Get match history from opgl-data (using internal method with PUUID)
-	matches, err := handler.serviceProxy.GetMatchesByPUUID(analyzeRequest.Region, summoner.PUUID, 20)
+	matches, err := handler.serviceProxy.GetMatchesByPUUID(normalizedRegion, summoner.PUUID, 20)
 	if err != nil {
 		if apiErr, ok := err.(*apierrors.APIError); ok {
 			apierrors.WriteError(writer, apiErr)
