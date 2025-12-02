@@ -56,3 +56,24 @@ type AnalysisResult struct {
 	ImprovementAreas interface{} `json:"improvementAreas"`
 	AnalyzedAt       time.Time   `json:"analyzedAt"`
 }
+
+// RankedStats represents a player's ranked statistics for a specific queue
+type RankedStats struct {
+	// Queue type (RANKED_SOLO_5x5, RANKED_FLEX_SR, RANKED_TFT, etc.)
+	QueueType string `json:"queueType"`
+	// Rank tier (IRON, BRONZE, SILVER, GOLD, PLATINUM, EMERALD, DIAMOND, MASTER, GRANDMASTER, CHALLENGER)
+	Tier string `json:"tier"`
+	// Division within the tier (I, II, III, IV)
+	Rank string `json:"rank"`
+	// League points within the division (0-100)
+	LeaguePoints int `json:"leaguePoints"`
+	// Total ranked wins
+	Wins int `json:"wins"`
+	// Total ranked losses
+	Losses int `json:"losses"`
+}
+
+// RankedStatsResponse contains the ranked stats array from data service
+type RankedStatsResponse struct {
+	RankedStats []RankedStats `json:"rankedStats"`
+}
