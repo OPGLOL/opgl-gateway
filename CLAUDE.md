@@ -1,12 +1,23 @@
 # opgl-gateway-service
 
-API Gateway service that orchestrates communication between OPGL microservices.
+Pure API Gateway service that routes and orchestrates communication between OPGL microservices.
 
 ## Service Overview
 
 - **Port**: 8080 (default)
-- **Purpose**: Routes and orchestrates requests between opgl-data-service and opgl-cortex-engine-service
+- **Purpose**: Routes requests and orchestrates between data, cortex, and auth services
 - **Framework**: Go with gorilla/mux router
+- **Database**: None (lightweight gateway!)
+
+## Architecture
+
+```
+Client → Gateway → Data Service (summoner/matches)
+                → Cortex Service (analysis)
+                → Auth Service (token validation, rate limiting)
+```
+
+The gateway is a pure proxy/router with no database. Authentication and rate limiting are delegated to opgl-auth-service.
 
 ## Project Structure
 
@@ -20,13 +31,18 @@ opgl-gateway-service/
 │   │   └── handlers_test.go     # Handler unit tests
 │   ├── middleware/
 │   │   ├── cors.go              # CORS middleware for preflight requests
-│   │   └── logging.go           # Request/response logging middleware
+│   │   ├── logging.go           # Request/response logging middleware
+│   │   ├── auth.go              # Auth middleware (calls auth service)
+│   │   └── ratelimit.go         # Rate limit middleware (calls auth service)
+│   ├── errors/
+│   │   └── errors.go            # Error types and responses
 │   ├── models/
-│   │   └── models.go            # Shared data models (Summoner, Match, AnalysisResult)
-│   └── proxy/
-│       ├── interface.go         # ServiceProxyInterface for dependency injection
-│       ├── proxy.go             # Service proxy implementation
-│       └── proxy_test.go        # Proxy unit tests
+│   │   └── models.go            # Shared data models
+│   ├── proxy/
+│   │   ├── interface.go         # ServiceProxyInterface for dependency injection
+│   │   └── proxy.go             # Service proxy implementation
+│   └── validation/
+│       └── validation.go        # Request validation
 ├── Makefile                     # Build, test, and run commands
 ├── Dockerfile                   # Docker containerization
 └── .env.example                 # Environment variable template
@@ -36,12 +52,14 @@ opgl-gateway-service/
 
 All endpoints use **POST** method (per project guidelines):
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /health` | Health check |
-| `POST /api/v1/summoner` | Proxy to opgl-data-service for summoner lookup |
-| `POST /api/v1/matches` | Proxy to opgl-data-service for match history |
-| `POST /api/v1/analyze` | Orchestrated analysis (data + cortex services) |
+| Endpoint | Description | Rate Limited |
+|----------|-------------|--------------|
+| `POST /health` | Health check | No |
+| `POST /api/v1/summoner` | Proxy to opgl-data-service | Yes |
+| `POST /api/v1/matches` | Proxy to opgl-data-service | Yes |
+| `POST /api/v1/analyze` | Orchestrated analysis (data + cortex) | Yes |
+
+Rate limiting requires `X-API-Key` header.
 
 ## Request Body Format
 
@@ -73,6 +91,7 @@ For matches endpoint, optional `count` parameter (defaults to 20):
 | `PORT` | 8080 | Server port |
 | `OPGL_DATA_URL` | http://localhost:8081 | opgl-data-service URL |
 | `OPGL_CORTEX_URL` | http://localhost:8082 | opgl-cortex-engine-service URL |
+| `OPGL_AUTH_URL` | http://localhost:8083 | opgl-auth-service URL |
 
 ## Development Commands
 
@@ -104,7 +123,7 @@ make lint
 ### Handler Pattern
 - Handlers receive requests, validate input, call proxy methods, and return JSON responses
 - All handlers validate required fields: region, gameName, tagLine
-- Error responses use `http.Error()` with appropriate status codes
+- Error responses use structured JSON with error codes
 
 ### Service Proxy Pattern
 - `ServiceProxy` handles all HTTP communication with downstream services
@@ -113,13 +132,20 @@ make lint
 
 ### Middleware Stack
 1. **CORS Middleware** - Handles preflight OPTIONS requests
-2. **Logging Middleware** - Logs incoming requests and response status codes using zerolog
+2. **Logging Middleware** - Logs incoming requests and response status codes
+3. **Rate Limit Middleware** - Calls auth service to check API key rate limits
+
+### Rate Limiting
+- Gateway calls `POST /api/v1/ratelimit/check` on auth service
+- Requires `X-API-Key` header on rate-limited endpoints
+- Returns rate limit headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 
 ### Analysis Flow (POST /api/v1/analyze)
-1. Fetch summoner data from opgl-data-service using Riot ID
-2. Fetch match history from opgl-data-service using PUUID (efficiency optimization)
-3. Send summoner + matches to opgl-cortex-engine-service for analysis
-4. Return analysis result to client
+1. Check rate limit via auth service
+2. Fetch summoner data from opgl-data-service using Riot ID
+3. Fetch match history from opgl-data-service using PUUID (efficiency optimization)
+4. Send summoner + matches to opgl-cortex-engine-service for analysis
+5. Return analysis result to client
 
 ## Testing
 
@@ -131,3 +157,4 @@ Tests use interfaces for dependency injection:
 
 - `github.com/gorilla/mux` - HTTP router
 - `github.com/rs/zerolog` - Structured logging
+- `github.com/google/uuid` - UUID parsing (for auth context)
